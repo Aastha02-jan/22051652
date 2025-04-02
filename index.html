@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Average Calculator Microservice</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Average Calculator Microservice</h1>
+        
+        <div class="control-panel">
+            <select id="numberType">
+                <option value="p">Prime Numbers</option>
+                <option value="f">Fibonacci Numbers</option>
+                <option value="e">Even Numbers</option>
+                <option value="r">Random Numbers</option>
+            </select>
+            
+            <input type="number" id="windowSize" class="window-size-input" value="10" min="1" max="100">
+            
+            <button id="fetchBtn">Fetch Numbers</button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Fetching data...</p>
+        </div>
+        
+        <div class="error" id="error"></div>
+        
+        <div class="response-container">
+            <div class="response-title">API Response:</div>
+            <div class="response-box">
+                <pre id="responseOutput">No data fetched yet. Select a number type and click "Fetch Numbers".</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const fetchBtn = document.getElementById('fetchBtn');
+            const numberType = document.getElementById('numberType');
+            const windowSize = document.getElementById('windowSize');
+            const responseOutput = document.getElementById('responseOutput');
+            const loading = document.getElementById('loading');
+            const errorDisplay = document.getElementById('error');
+            
+            fetchBtn.addEventListener('click', async function() {
+                // Clear previous error
+                errorDisplay.textContent = '';
+                
+                // Show loading indicator
+                loading.style.display = 'block';
+                
+                try {
+                    const type = numberType.value;
+                    const size = windowSize.value;
+                    
+                    // Make request to our microservice
+                    const response = await fetch(`/numbers/${type}?windowSize=${size}`, {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    // Format the response for display
+                    responseOutput.textContent = JSON.stringify(data, null, 2);
+                } catch (error) {
+                    console.error('Error fetching data:', error);
+                    errorDisplay.textContent = `Error: ${error.message}`;
+                    responseOutput.textContent = 'Failed to fetch data. See error message above.';
+                } finally {
+                    // Hide loading indicator
+                    loading.style.display = 'none';
+                }
+            });
+        });
+    </script>
+    <script src="script.js" charset="utf-8"></script>
+</body>
+</html>
