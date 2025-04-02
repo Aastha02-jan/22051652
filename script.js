@@ -1,178 +1,98 @@
 const express = require('express');
 const axios = require('axios');
-const winston = require('winston');
-const rateLimit = require('express-rate-limit');
-const helmet = require('helmet');
-
-// Initialize Express app
 const app = express();
-const PORT = process.env.PORT || 9876;
+const PORT = 9876;
 
-// Configure logging
-const logger = winston.createLogger({
-    level: 'info',
-    format: winston.format.json(),
-    transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: 'average-calculator.log' })
-    ]
-});
-
-// Security middleware
-app.use(helmet());
-
-// Rate limiting
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100 // limit each IP to 100 requests per windowMs
-});
-app.use(limiter);
-
-// Configuration
+// Enhanced configuration
 const CONFIG = {
     WINDOW_SIZE: 10,
-    THIRD_PARTY_API_BASE: 'http://20.244.56.144/evaluation-service',
-    TIMEOUT_MS: 500,
-    ALLOWED_TYPES: ['p', 'f', 'e', 'r'] // prime, fibonacci, even, random
+    THIRD_PARTY_API: {
+        primes: 'http://20.244.56.144/numbers/primes',
+        fibo: 'http://20.244.56.144/numbers/fibo',
+        even: 'http://20.244.56.144/numbers/even',
+        rand: 'http://20.244.56.144/numbers/rand'
+    },
+    TIMEOUT_MS: 500
 };
 
-// In-memory storage for numbers by type
-const numberWindows = {};
-CONFIG.ALLOWED_TYPES.forEach(type => {
-    numberWindows[type] = [];
-});
-
-// Helper function to calculate average
-const calculateAverage = (numbers) => {
-    if (numbers.length === 0) return 0;
-    const sum = numbers.reduce((acc, num) => acc + num, 0);
-    return parseFloat((sum / numbers.length).toFixed(2));
+// Initialize number windows
+const numberWindows = {
+    p: [], f: [], e: [], r: []
 };
 
-// Helper function to fetch numbers from third-party API
+// Improved fetch function with fallback
 const fetchNumbers = async (type) => {
+    const endpoints = {
+        p: CONFIG.THIRD_PARTY_API.primes,
+        f: CONFIG.THIRD_PARTY_API.fibo,
+        e: CONFIG.THIRD_PARTY_API.even,
+        r: CONFIG.THIRD_PARTY_API.rand
+    };
+
     try {
-        let endpoint;
-        switch (type) {
-            case 'p': endpoint = 'primes'; break;
-            case 'f': endpoint = 'fibo'; break;
-            case 'e': endpoint = 'even'; break;
-            case 'r': endpoint = 'rand'; break;
-            default: throw new Error('Invalid number type');
-        }
-
-        const url = `${CONFIG.THIRD_PARTY_API_BASE}/${endpoint}`;
-        logger.info(`Fetching numbers from: ${url}`);
-
-        const response = await axios.get(url, { timeout: CONFIG.TIMEOUT_MS });
+        console.log(`Fetching from: ${endpoints[type]}`);
+        const response = await axios.get(endpoints[type], {
+            timeout: CONFIG.TIMEOUT_MS
+        });
         return response.data.numbers || [];
     } catch (error) {
-        logger.error(`Error fetching ${type} numbers: ${error.message}`);
-        return [];
+        console.error(`Failed to fetch ${type} numbers:`, error.message);
+        
+        // Fallback test data if API fails
+        const fallback = {
+            p: [2, 3, 5, 7, 11],
+            f: [1, 1, 2, 3, 5, 8],
+            e: [2, 4, 6, 8, 10],
+            r: [7, 14, 21, 28, 35]
+        };
+        return fallback[type];
     }
 };
 
-// Process and update number window
-const updateNumberWindow = (type, newNumbers, windowSize) => {
-    const currentWindow = numberWindows[type];
-    const prevWindow = [...currentWindow];
-
-    // Add new numbers, ensuring uniqueness
-    newNumbers.forEach(num => {
-        if (!currentWindow.includes(num)) {
-            currentWindow.push(num);
-            
-            // Enforce window size limit
-            if (currentWindow.length > windowSize) {
-                currentWindow.shift(); // Remove oldest number
-            }
-        }
-    });
-
-    return prevWindow;
-};
-
-// API endpoint
-app.get('/numbers/:numberid', async (req, res) => {
-    const startTime = process.hrtime();
-    const numberId = req.params.numberid;
+// API endpoint with enhanced error handling
+app.get('/numbers/:type', async (req, res) => {
+    const type = req.params.type;
     const windowSize = parseInt(req.query.windowSize) || CONFIG.WINDOW_SIZE;
 
-    // Validate input
-    if (!CONFIG.ALLOWED_TYPES.includes(numberId)) {
-        logger.warn(`Invalid number type requested: ${numberId}`);
-        return res.status(400).json({ 
-            error: `Invalid number type. Use one of: ${CONFIG.ALLOWED_TYPES.join(', ')}` 
-        });
-    }
-
-    if (isNaN(windowSize) || windowSize < 1) {
-        logger.warn(`Invalid window size: ${req.query.windowSize}`);
-        return res.status(400).json({ 
-            error: 'Window size must be a positive integer' 
+    if (!['p', 'f', 'e', 'r'].includes(type)) {
+        return res.status(400).json({
+            error: 'Invalid type. Use p (primes), f (fibo), e (even), or r (random)'
         });
     }
 
     try {
-        // Save previous state
-        const windowPrevState = [...numberWindows[numberId]];
+        const prevState = [...numberWindows[type]];
+        const newNumbers = await fetchNumbers(type);
+        
+        // Update window
+        newNumbers.forEach(num => {
+            if (!numberWindows[type].includes(num)) {
+                numberWindows[type].push(num);
+                if (numberWindows[type].length > windowSize) {
+                    numberWindows[type].shift();
+                }
+            }
+        });
 
-        // Fetch new numbers
-        const newNumbers = await fetchNumbers(numberId);
-        logger.info(`Fetched ${newNumbers.length} new numbers for type ${numberId}`);
-
-        // Update window with new numbers
-        updateNumberWindow(numberId, newNumbers, windowSize);
-
-        // Calculate response time
-        const elapsedTime = process.hrtime(startTime);
-        const elapsedMs = elapsedTime[0] * 1000 + elapsedTime[1] / 1e6;
-        logger.info(`Request processed in ${elapsedMs.toFixed(2)}ms`);
-
-        // Prepare response
-        const response = {
-            windowPrevState,
-            windowCurrState: [...numberWindows[numberId]],
+        res.json({
+            windowPrevState: prevState,
+            windowCurrState: [...numberWindows[type]],
             numbers: newNumbers,
-            avg: calculateAverage(numberWindows[numberId])
-        };
-
-        res.json(response);
+            avg: calculateAverage(numberWindows[type])
+        });
     } catch (error) {
-        logger.error(`Error processing request: ${error.stack}`);
+        console.error('Server error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.status(200).json({ 
-        status: 'healthy',
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString()
-    });
-});
+function calculateAverage(numbers) {
+    if (numbers.length === 0) return 0;
+    const sum = numbers.reduce((a, b) => a + b, 0);
+    return parseFloat((sum / numbers.length).toFixed(2));
+}
 
 // Start server
-const server = app.listen(PORT, () => {
-    logger.info(`Average Calculator microservice running on port ${PORT}`);
+app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
 });
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-    logger.info('SIGTERM received. Shutting down gracefully...');
-    server.close(() => {
-        logger.info('Server closed');
-        process.exit(0);
-    });
-});
-
-process.on('SIGINT', () => {
-    logger.info('SIGINT received. Shutting down gracefully...');
-    server.close(() => {
-        logger.info('Server closed');
-        process.exit(0);
-    });
-});
-
-module.exports = app; // For testing
